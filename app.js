@@ -72,11 +72,15 @@ async function extractFrames() {
   const originalTime = Math.min(video.currentTime, Math.max(video.duration - 0.01, 0));
   for (let i = 0; i < count; i += 1) {
     await waitForSeek(video.duration * i / Math.max(count - 1, 1));
+    context.save();
+    context.translate(0, scratch.height);
+    context.scale(1, -1);
     context.drawImage(video, 0, 0, scratch.width, scratch.height);
+    context.restore();
     const bitmap = await createImageBitmap(scratch);
     const texture = new THREE.Texture(bitmap);
-    // Canvas/ImageBitmap pixels start at the top; Three.js must flip the upload once.
-    texture.flipY = true;
+    // ImageBitmap already exposes canvas pixels in the orientation used by the UVs.
+    texture.flipY = false;
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.LinearFilter;
