@@ -1,0 +1,5 @@
+# local/generated files
+.DS_Store
+.playwright-cli/
+graphify-out/
+node_modules/

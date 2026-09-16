@@ -1,0 +1,6 @@
+{
+  "name": "frame-space",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {"dev": "python3 -m http.server 4173", "start": "python3 -m http.server 4173"}
+}
