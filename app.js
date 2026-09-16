@@ -23,8 +23,8 @@ scene.add(cube);
 let frameWidth = 2.65;
 let frameHeight = 2.65;
 let depth = 1.25;
-let stackFill = 0.65;
-let frameOpacity = 0.24;
+let stackFill = 0.12;
+let frameOpacity = 0.08;
 let glow = 0.70;
 let rotationSpeed = 0.35;
 let frameTextures = [];
@@ -123,13 +123,13 @@ function rebuildStack() {
 function updateStack() {
   if (!frameMeshes.length || !video.duration) return;
   frameIndex = Math.min(frameTextures.length - 1, Math.max(0, Math.round(video.currentTime / video.duration * (frameTextures.length - 1))));
-  const visibleCount = Math.max(1, Math.round(frameTextures.length * stackFill));
-  const firstVisible = Math.max(0, frameIndex - visibleCount + 1);
+  const focusRadius = Math.max(1, Math.round(frameTextures.length * stackFill));
   frameMeshes.forEach(mesh => {
-    const visible = mesh.userData.index >= firstVisible && mesh.userData.index <= frameIndex;
-    const age = frameIndex - mesh.userData.index;
-    mesh.visible = visible;
-    mesh.material.opacity = visible ? (mesh.userData.index === frameIndex ? 0.96 : Math.max(0.035, frameOpacity * (1 - age / Math.max(visibleCount, 1) * 0.7))) : 0;
+    const distance = Math.abs(mesh.userData.index - frameIndex);
+    const focus = Math.max(0, 1 - distance / focusRadius);
+    // Every frame stays in the volume; playback only changes local emphasis.
+    mesh.visible = true;
+    mesh.material.opacity = Math.min(0.92, frameOpacity + focus * (0.92 - frameOpacity));
   });
   if (activeFrame) {
     activeFrame.visible = true;
