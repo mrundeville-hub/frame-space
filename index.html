@@ -1,70 +1,54 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#050505" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="description" content="Turn a video clip into a volume: time becomes the third axis." />
     <link rel="icon" href="data:," />
-    <title>FRAME/SPACE — spatial video tool</title>
+    <title>FRAME / SPACE — video as volume</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <header class="topbar">
-      <a class="brand" href="#">FRAME<span>/</span>SPACE</a>
-      <div class="topbar-meta"><span class="status-dot"></span><span>LOCAL RENDER</span><span class="slash">/</span><span>v0.1</span></div>
-    </header>
+    <div class="page">
+      <header class="meta">
+        <span>Video as volume</span>
+        <span id="frame-count">—</span>
+      </header>
 
-    <main class="app-shell">
-      <aside class="sidebar left-panel">
-        <div class="eyebrow">SPATIAL VIDEO TOOL</div>
-        <h1>Make footage<br /><em>occupy space.</em></h1>
-        <p class="intro">Drop a video fragment. FRAME/SPACE wraps it into a living 3D volume.</p>
+      <h1>Time as shape.</h1>
+      <p class="caption">01 / <span id="source-name">sample.mp4</span></p>
 
-        <label class="dropzone" id="dropzone" for="file-input">
-          <input id="file-input" type="file" accept="video/*" />
-          <span class="drop-icon">＋</span>
-          <span class="drop-title">Drop video here</span>
-          <span class="drop-hint">or click to browse · MP4, MOV, WebM</span>
-        </label>
-        <div class="source-row"><span class="source-label">SOURCE</span><span id="file-name">reference.mp4</span></div>
+      <div class="stage" id="stage">
+        <canvas id="canvas"></canvas>
+      </div>
 
-        <div class="left-footer">
-          <div><span class="tiny-label">OUTPUT</span><strong>3D FRAME</strong></div>
-          <div><span class="tiny-label">RENDER MODE</span><strong>REALTIME / WEBGL</strong></div>
+      <div class="controls">
+        <div class="control">
+          <div class="control-head"><label for="spacing">Frame spacing</label><output id="spacing-value" for="spacing">0.000</output></div>
+          <input id="spacing" type="range" min="0.3" max="2.6" step="0.01" value="1.05" />
         </div>
-      </aside>
-
-      <section class="stage-wrap">
-        <div class="stage-head"><span>VIEWPORT 01</span><span id="stage-state">PLAYING</span></div>
-        <div class="stage" id="stage">
-          <div class="stage-crosshair crosshair-a"></div><div class="stage-crosshair crosshair-b"></div>
-          <canvas id="canvas"></canvas>
-          <div class="stage-note">DRAG TO ROTATE CUBE <span>·</span> SCROLL TO ZOOM</div>
+        <div class="control">
+          <div class="control-head"><label for="rotation">Rotation</label><output id="rotation-value" for="rotation">0.0°</output></div>
+          <input id="rotation" type="range" min="-180" max="180" step="0.1" value="-26" />
         </div>
-        <div class="timeline-wrap">
-          <button class="play-button" id="play-button" aria-label="Play or pause">Ⅱ</button>
-          <span class="timecode" id="time-current">00:00</span>
-          <input class="timeline" id="timeline" type="range" min="0" max="1" step="0.01" value="0" />
-          <span class="timecode" id="time-total">00:00</span>
-          <button class="reset-button" id="reset-button">RESET VIEW</button>
+        <div class="control">
+          <div class="control-head"><label for="opacity">Opacity</label><output id="opacity-value" for="opacity">24%</output></div>
+          <input id="opacity" type="range" min="2" max="100" step="1" value="24" />
         </div>
-      </section>
+      </div>
 
-      <aside class="sidebar right-panel">
-        <div class="panel-heading"><span class="eyebrow">PARAMETERS</span><span class="panel-index">01—05</span></div>
-        <div class="control-group"><div class="control-label"><span>DEPTH</span><output id="depth-value">1.25</output></div><input id="depth" type="range" min="0.65" max="2.2" step="0.01" value="1.25" /></div>
-        <div class="control-group"><div class="control-label"><span>ACTIVE WINDOW</span><output id="fill-value">0.12</output></div><input id="fill" type="range" min="0.04" max="0.4" step="0.01" value="0.12" /></div>
-        <div class="control-group"><div class="control-label"><span>EDGE GLOW</span><output id="glow-value">0.70</output></div><input id="glow" type="range" min="0" max="1" step="0.01" value="0.70" /></div>
-        <div class="control-group"><div class="control-label"><span>FRAME OPACITY</span><output id="opacity-value">0.08</output></div><input id="opacity" type="range" min="0.02" max="0.24" step="0.01" value="0.08" /></div>
-        <div class="control-group"><div class="control-label"><span>CUBE ROTATION</span><output id="rotation-value">0.35</output></div><input id="rotation" type="range" min="0" max="1" step="0.01" value="0.35" /></div>
-        <div class="divider"></div>
-        <button id="export-button" class="export-button"><span>EXPORT CLIP</span><span>↗</span></button>
-        <button id="snapshot-button" class="snapshot-button">SAVE STILL FRAME</button>
-        <p class="privacy-note"><span class="status-dot"></span> Your video stays in this browser. No upload required.</p>
-      </aside>
-    </main>
+      <footer class="meta">
+        <span>Code study / <span id="status">LOADING</span></span>
+        <span class="actions">
+          <label class="link" for="file-input">Open video<input id="file-input" type="file" accept="video/*" /></label>
+          <button class="link" id="snapshot" type="button">Still</button>
+          <button class="link" id="export" type="button">Record turn</button>
+        </span>
+      </footer>
+    </div>
 
-    <video id="video" playsinline muted loop crossorigin="anonymous" src="./public/reference.mp4"></video>
+    <video id="video" playsinline muted crossorigin="anonymous" preload="auto" src="./public/sample.mp4"></video>
     <script type="module" src="./app.js"></script>
   </body>
 </html>

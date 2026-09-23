@@ -4,48 +4,135 @@ const canvas = document.querySelector('#canvas');
 const stage = document.querySelector('#stage');
 const video = document.querySelector('#video');
 const fileInput = document.querySelector('#file-input');
-const dropzone = document.querySelector('#dropzone');
-const fileName = document.querySelector('#file-name');
-const playButton = document.querySelector('#play-button');
-const state = document.querySelector('#stage-state');
-const timeline = document.querySelector('#timeline');
-const currentTime = document.querySelector('#time-current');
-const totalTime = document.querySelector('#time-total');
-const renderer = new THREE.WebGLRenderer({canvas, antialias: true, alpha: true, preserveDrawingBuffer: true});
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.setClearColor(0x000000, 0);
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 100);
-const cube = new THREE.Group();
-scene.add(cube);
+const statusEl = document.querySelector('#status');
+const frameCountEl = document.querySelector('#frame-count');
+const sourceEl = document.querySelector('#source-name');
 
-let frameWidth = 2.65;
-let frameHeight = 2.65;
-let depth = 1.25;
-let stackFill = 0.12;
-let frameOpacity = 0.08;
-let glow = 0.70;
-let rotationSpeed = 0.35;
-let frameTextures = [];
-let frameMeshes = [];
-let activeFrame = null;
-let frameIndex = 0;
-let building = false;
-let cubeRotation = {x: 0.16, y: -0.42};
+// Volume resolution. Depth is the time axis: one texel layer per sampled frame.
+const MAX_SIDE = 192;
+const MAX_DEPTH = 192;
+
+const renderer = new THREE.WebGLRenderer({canvas, antialias: false, alpha: false, preserveDrawingBuffer: true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+renderer.setClearColor(0x000000, 1);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
+
+const uniforms = {
+  uVolume: {value: null},
+  uScale: {value: new THREE.Vector3(1, 1, 1)},
+  uDensity: {value: 0.24},
+  uRadius: {value: 0.16},
+  uSoft: {value: 0.05},
+  uSteps: {value: 160},
+};
+
+const material = new THREE.ShaderMaterial({
+  glslVersion: THREE.GLSL3,
+  uniforms,
+  transparent: true,
+  depthWrite: false,
+  side: THREE.BackSide,
+  vertexShader: `
+    out vec3 vOrigin;
+    out vec3 vDirection;
+    void main() {
+      vOrigin = (inverse(modelMatrix) * vec4(cameraPosition, 1.0)).xyz;
+      vDirection = position - vOrigin;
+      gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    precision highp float;
+    precision highp sampler3D;
+
+    in vec3 vOrigin;
+    in vec3 vDirection;
+
+    uniform sampler3D uVolume;
+    uniform vec3 uScale;
+    uniform float uDensity;
+    uniform float uRadius;
+    uniform float uSoft;
+    uniform float uSteps;
+
+    layout(location = 0) out vec4 fragColor;
+
+    // Geometry is a unit cube scaled by uScale, so object space is [-0.5, 0.5]^3.
+    vec2 hitBox(vec3 origin, vec3 dir) {
+      vec3 invDir = 1.0 / dir;
+      vec3 a = (vec3(-0.5) - origin) * invDir;
+      vec3 b = (vec3(0.5) - origin) * invDir;
+      vec3 tmin = min(a, b);
+      vec3 tmax = max(a, b);
+      return vec2(max(tmin.x, max(tmin.y, tmin.z)), min(tmax.x, min(tmax.y, tmax.z)));
+    }
+
+    // Measured in world units so the rounding stays even on a non-cubic block.
+    float roundBox(vec3 p) {
+      vec3 q = abs(p * uScale) - uScale * 0.5 + uRadius;
+      return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - uRadius;
+    }
+
+    float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+
+    void main() {
+      vec3 dir = normalize(vDirection);
+      vec2 bounds = hitBox(vOrigin, dir);
+      if (bounds.x > bounds.y) discard;
+      bounds.x = max(bounds.x, 0.0);
+
+      float dt = (bounds.y - bounds.x) / uSteps;
+      // Jitter the entry point so the fixed step count does not band the block.
+      vec3 p = vOrigin + (bounds.x + dt * hash(gl_FragCoord.xy)) * dir;
+      vec3 stride = dir * dt;
+      float sigma = uDensity * 26.0;
+
+      vec4 acc = vec4(0.0);
+      for (float i = 0.0; i < uSteps; i += 1.0) {
+        float mask = 1.0 - smoothstep(-uSoft, 0.0, roundBox(p));
+        if (mask > 0.002) {
+          float alpha = 1.0 - exp(-sigma * mask * dt);
+          vec3 color = texture(uVolume, p + 0.5).rgb;
+          acc.rgb += (1.0 - acc.a) * alpha * color;
+          acc.a += (1.0 - acc.a) * alpha;
+          if (acc.a > 0.995) break;
+        }
+        p += stride;
+      }
+      fragColor = acc;
+    }
+  `,
+});
+
+const block = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
+block.rotation.order = 'YXZ';
+block.visible = false;
+scene.add(block);
+
+let volumeTexture = null;
+let frameCount = 0;
+let depth = 1.05;
+let angleY = -0.45;
+let angleX = 0.42;
+let spin = 0.09;
 let zoom = 1;
 let dragging = false;
 let lastPointer = {x: 0, y: 0};
-let oldObjectUrl = null;
+let buildToken = 0;
+let spinHeldUntil = 0;
+let objectUrl = null;
 
-const shadow = new THREE.Mesh(new THREE.CircleGeometry(2.1, 64), new THREE.MeshBasicMaterial({color: 0x173427, transparent: true, opacity: 0.18, depthWrite: false, blending: THREE.AdditiveBlending}));
-shadow.rotation.x = -Math.PI / 2;
-shadow.scale.set(1.3, 0.35, 1);
-shadow.position.y = -1.12;
-scene.add(shadow);
+function setScale() {
+  const ratio = (video.videoWidth || 16) / (video.videoHeight || 9);
+  const w = ratio >= 1 ? 2.4 : 2.4 * ratio;
+  const h = ratio >= 1 ? 2.4 / ratio : 2.4;
+  block.scale.set(w, h, depth);
+  uniforms.uScale.value.set(w, h, depth);
+  uniforms.uRadius.value = Math.min(w, h, depth) * 0.22;
+  uniforms.uSoft.value = Math.min(w, h, depth) * 0.07;
+}
 
-function formatTime(seconds) { return Number.isFinite(seconds) ? `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(Math.floor(seconds % 60)).padStart(2, '0')}` : '00:00'; }
-function setValue(id, value, digits = 2) { document.querySelector(`#${id}-value`).textContent = Number(value).toFixed(digits); }
 function waitForSeek(time) {
   return new Promise(resolve => {
     const done = () => { video.removeEventListener('seeked', done); resolve(); };
@@ -53,90 +140,51 @@ function waitForSeek(time) {
     video.currentTime = time;
   });
 }
-async function extractFrames() {
+
+async function buildVolume() {
   if (!video.duration || !video.videoWidth) return;
-  building = true;
-  state.textContent = 'BUILDING STACK';
+  const token = ++buildToken;
   video.pause();
-  const count = Math.min(60, Math.max(18, Math.round(video.duration * 5)));
+
   const ratio = video.videoWidth / video.videoHeight;
-  const maxSide = 360;
+  const w = ratio >= 1 ? MAX_SIDE : Math.max(2, Math.round(MAX_SIDE * ratio));
+  const h = ratio >= 1 ? Math.max(2, Math.round(MAX_SIDE / ratio)) : MAX_SIDE;
+  const d = Math.min(MAX_DEPTH, Math.max(48, Math.round(video.duration * 30)));
+
   const scratch = document.createElement('canvas');
-  // Remove meshes before detaching their old ImageBitmaps.
-  clearCube();
-  scratch.width = ratio >= 1 ? maxSide : Math.round(maxSide * ratio);
-  scratch.height = ratio >= 1 ? Math.round(maxSide / ratio) : maxSide;
-  const context = scratch.getContext('2d', {willReadFrequently: false});
-  frameTextures.forEach(texture => { texture.image?.close?.(); texture.dispose(); });
-  frameTextures = [];
-  const originalTime = Math.min(video.currentTime, Math.max(video.duration - 0.01, 0));
-  for (let i = 0; i < count; i += 1) {
-    await waitForSeek(video.duration * i / Math.max(count - 1, 1));
-    context.save();
-    context.translate(0, scratch.height);
-    context.scale(1, -1);
-    context.drawImage(video, 0, 0, scratch.width, scratch.height);
-    context.restore();
-    const bitmap = await createImageBitmap(scratch);
-    const texture = new THREE.Texture(bitmap);
-    // ImageBitmap already exposes canvas pixels in the orientation used by the UVs.
-    texture.flipY = false;
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.minFilter = THREE.LinearFilter;
-    texture.magFilter = THREE.LinearFilter;
-    texture.needsUpdate = true;
-    frameTextures.push(texture);
-    if (i % 4 === 0) state.textContent = `STACK ${Math.round((i + 1) / count * 100)}%`;
+  scratch.width = w;
+  scratch.height = h;
+  const context = scratch.getContext('2d', {willReadFrequently: true});
+  const data = new Uint8Array(w * h * d * 4);
+  const layer = w * h * 4;
+
+  for (let i = 0; i < d; i += 1) {
+    await waitForSeek(video.duration * i / Math.max(d - 1, 1));
+    if (token !== buildToken) return; // a newer clip was dropped mid-build
+    context.drawImage(video, 0, 0, w, h);
+    data.set(context.getImageData(0, 0, w, h).data, i * layer);
+    if (i % 8 === 0) statusEl.textContent = `BUILDING ${Math.round((i + 1) / d * 100)}%`;
   }
-  frameWidth = 2.65;
-  frameHeight = frameWidth / ratio;
-  video.currentTime = originalTime;
-  rebuildStack();
-  updateStack();
-  building = false;
-  state.textContent = video.paused ? 'PAUSED' : 'PLAYING';
+
+  volumeTexture?.dispose();
+  volumeTexture = new THREE.Data3DTexture(data, w, h, d);
+  volumeTexture.format = THREE.RGBAFormat;
+  volumeTexture.type = THREE.UnsignedByteType;
+  volumeTexture.minFilter = THREE.LinearFilter;
+  volumeTexture.magFilter = THREE.LinearFilter;
+  volumeTexture.wrapS = volumeTexture.wrapT = volumeTexture.wrapR = THREE.ClampToEdgeWrapping;
+  volumeTexture.unpackAlignment = 1;
+  volumeTexture.needsUpdate = true;
+  uniforms.uVolume.value = volumeTexture;
+
+  frameCount = d;
+  frameCountEl.textContent = `${d} FRAMES`;
+  setScale();
+  updateSpacingReadout();
+  block.visible = true;
+  statusEl.textContent = 'READY';
 }
-function clearCube() {
-  frameMeshes.forEach(mesh => { mesh.material.dispose(); mesh.geometry.dispose(); cube.remove(mesh); });
-  frameMeshes = [];
-  if (activeFrame) { cube.remove(activeFrame); activeFrame.geometry.dispose(); activeFrame.material.dispose(); activeFrame = null; }
-  cube.children.filter(child => child.userData.shell).forEach(child => { child.geometry.dispose(); child.material.dispose(); cube.remove(child); });
-}
-function rebuildStack() {
-  clearCube();
-  if (!frameTextures.length) return;
-  const planeGeometry = new THREE.PlaneGeometry(frameWidth, frameHeight);
-  frameTextures.forEach((texture, index) => {
-    const mesh = new THREE.Mesh(planeGeometry, new THREE.MeshBasicMaterial({map: texture, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false, blending: THREE.NormalBlending}));
-    mesh.userData.index = index;
-    mesh.position.z = depth / 2 - index / Math.max(frameTextures.length - 1, 1) * depth;
-    cube.add(mesh);
-    frameMeshes.push(mesh);
-  });
-  const shell = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(frameWidth, frameHeight, depth)), new THREE.LineBasicMaterial({color: 0x39765a, transparent: true, opacity: 0.26, blending: THREE.AdditiveBlending, depthWrite: false}));
-  shell.userData.shell = true;
-  cube.add(shell);
-  activeFrame = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(frameWidth, frameHeight)), new THREE.LineBasicMaterial({color: 0xb9f34a, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false}));
-  cube.add(activeFrame);
-  shadow.scale.x = 1.1 + depth * 0.35;
-}
-function updateStack() {
-  if (!frameMeshes.length || !video.duration) return;
-  frameIndex = Math.min(frameTextures.length - 1, Math.max(0, Math.round(video.currentTime / video.duration * (frameTextures.length - 1))));
-  const focusRadius = Math.max(1, Math.round(frameTextures.length * stackFill));
-  frameMeshes.forEach(mesh => {
-    const distance = Math.abs(mesh.userData.index - frameIndex);
-    const focus = Math.max(0, 1 - distance / focusRadius);
-    // Every frame stays in the volume; playback only changes local emphasis.
-    mesh.visible = true;
-    mesh.material.opacity = Math.min(0.92, frameOpacity + focus * (0.92 - frameOpacity));
-  });
-  if (activeFrame) {
-    activeFrame.visible = true;
-    activeFrame.position.z = depth / 2 - frameIndex / Math.max(frameTextures.length - 1, 1) * depth;
-  }
-  cube.children.filter(child => child.userData.shell).forEach(shell => { shell.material.opacity = 0.08 + glow * 0.34; });
-}
+
 function resize() {
   const rect = stage.getBoundingClientRect();
   renderer.setSize(rect.width, rect.height, false);
@@ -145,61 +193,159 @@ function resize() {
 }
 new ResizeObserver(resize).observe(stage);
 resize();
-function draw(time) {
-  if (!dragging && !video.paused) cubeRotation.y += 0.00012 * rotationSpeed;
-  cube.rotation.order = 'YXZ';
-  cube.rotation.set(cubeRotation.x, cubeRotation.y, 0);
-  camera.position.set(0, 0.8, 7.0 / zoom);
+
+// Hold the default framing until the block outgrows it, then back off to fit.
+function cameraDistance() {
+  const s = block.scale;
+  const radius = 0.5 * Math.hypot(s.x, s.y, s.z);
+  return Math.max(5.8, radius / Math.sin(camera.fov * Math.PI / 360) * 1.1);
+}
+
+let lastTime = performance.now();
+function draw(now) {
+  const dt = Math.min((now - lastTime) / 1000, 0.1);
+  lastTime = now;
+  if (!dragging && now > spinHeldUntil) {
+    angleY += spin * dt;
+    setRotationReadout();
+  }
+  block.rotation.set(angleX, angleY, 0);
+  camera.position.set(0, 0.35, cameraDistance() / zoom);
   camera.lookAt(0, 0, 0);
   renderer.render(scene, camera);
   requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
 
-function syncMetadata() { timeline.max = video.duration || 1; totalTime.textContent = formatTime(video.duration); }
-function startExtraction() { if (building) return; extractFrames().then(() => video.play().catch(() => {})); }
-video.addEventListener('loadedmetadata', () => { syncMetadata(); startExtraction(); });
-video.addEventListener('timeupdate', () => { syncMetadata(); timeline.value = video.currentTime; currentTime.textContent = formatTime(video.currentTime); if (!building) updateStack(); });
-video.addEventListener('play', () => { playButton.textContent = 'Ⅱ'; if (!building) state.textContent = 'PLAYING'; });
-video.addEventListener('pause', () => { playButton.textContent = '▶'; if (!building) state.textContent = 'PAUSED'; });
-playButton.addEventListener('click', () => { if (video.paused) video.play().catch(() => {}); else video.pause(); });
-timeline.addEventListener('input', () => { video.currentTime = Number(timeline.value); updateStack(); });
+// --- controls -------------------------------------------------------------
 
-document.querySelector('#depth').addEventListener('input', event => { depth = Number(event.target.value); setValue('depth', depth); rebuildStack(); updateStack(); });
-document.querySelector('#fill').addEventListener('input', event => { stackFill = Number(event.target.value); setValue('fill', stackFill); updateStack(); });
-document.querySelector('#opacity').addEventListener('input', event => { frameOpacity = Number(event.target.value); setValue('opacity', frameOpacity); updateStack(); });
-document.querySelector('#glow').addEventListener('input', event => { glow = Number(event.target.value); setValue('glow', glow); updateStack(); });
-document.querySelector('#rotation').addEventListener('input', event => { rotationSpeed = Number(event.target.value); setValue('rotation', rotationSpeed); });
+function bindSlider(id, onInput) {
+  const input = document.querySelector(`#${id}`);
+  const output = document.querySelector(`#${id}-value`);
+  const paint = () => {
+    const pct = (input.value - input.min) / (input.max - input.min) * 100;
+    input.style.setProperty('--fill', `${pct}%`);
+  };
+  input.addEventListener('input', () => { onInput(Number(input.value), output); paint(); });
+  paint();
+  return {input, output, paint};
+}
 
-function loadVideo(file, label = file.name) {
-  if (!file || !file.type.startsWith('video/')) return;
-  if (oldObjectUrl) URL.revokeObjectURL(oldObjectUrl);
-  oldObjectUrl = URL.createObjectURL(file);
-  video.pause(); video.src = oldObjectUrl; video.load(); fileName.textContent = label; state.textContent = 'LOADING';
-  video.play().catch(() => {});
+const spacing = bindSlider('spacing', value => {
+  depth = value;
+  setScale();
+  updateSpacingReadout();
+});
+function updateSpacingReadout() {
+  spacing.output.textContent = (depth / Math.max(frameCount, 1)).toFixed(4);
+}
+
+const rotation = bindSlider('rotation', value => {
+  angleY = value * Math.PI / 180;
+  spinHeldUntil = performance.now() + 900; // let the thumb stay under the cursor
+});
+function setRotationReadout() {
+  let deg = (angleY * 180 / Math.PI + 180) % 360 - 180;
+  rotation.input.value = deg;
+  rotation.output.textContent = `${deg.toFixed(1)}°`;
+  rotation.paint();
+}
+
+const opacity = bindSlider('opacity', (value, output) => {
+  uniforms.uDensity.value = value / 100;
+  output.textContent = `${Math.round(value)}%`;
+});
+uniforms.uDensity.value = Number(opacity.input.value) / 100;
+opacity.output.textContent = `${Math.round(opacity.input.value)}%`;
+depth = Number(spacing.input.value);
+
+stage.addEventListener('pointerdown', event => {
+  dragging = true;
+  lastPointer = {x: event.clientX, y: event.clientY};
+  stage.setPointerCapture(event.pointerId);
+});
+stage.addEventListener('pointermove', event => {
+  if (!dragging) return;
+  angleY += (event.clientX - lastPointer.x) * 0.008;
+  angleX = Math.max(-0.9, Math.min(0.9, angleX + (event.clientY - lastPointer.y) * 0.006));
+  lastPointer = {x: event.clientX, y: event.clientY};
+  setRotationReadout();
+});
+const stopDrag = () => { dragging = false; };
+stage.addEventListener('pointerup', stopDrag);
+stage.addEventListener('pointercancel', stopDrag);
+stage.addEventListener('wheel', event => {
+  event.preventDefault();
+  zoom = Math.max(0.6, Math.min(1.8, zoom - event.deltaY * 0.001));
+}, {passive: false});
+
+// --- source ---------------------------------------------------------------
+
+function loadVideo(file) {
+  if (!file) return;
+  if (!file.type.startsWith('video/')) {
+    statusEl.textContent = 'NOT A VIDEO FILE';
+    return;
+  }
+  if (objectUrl) URL.revokeObjectURL(objectUrl);
+  objectUrl = URL.createObjectURL(file);
+  block.visible = false;
+  statusEl.textContent = 'LOADING';
+  sourceEl.textContent = file.name;
+  video.src = objectUrl;
+  video.load();
 }
 fileInput.addEventListener('change', event => loadVideo(event.target.files[0]));
-['dragenter', 'dragover'].forEach(type => dropzone.addEventListener(type, event => { event.preventDefault(); dropzone.classList.add('dragover'); }));
-['dragleave', 'drop'].forEach(type => dropzone.addEventListener(type, event => { event.preventDefault(); dropzone.classList.remove('dragover'); }));
-dropzone.addEventListener('drop', event => loadVideo(event.dataTransfer.files[0]));
-stage.addEventListener('pointerdown', event => { dragging = true; lastPointer = {x: event.clientX, y: event.clientY}; stage.setPointerCapture(event.pointerId); });
-stage.addEventListener('pointermove', event => { if (!dragging) return; cubeRotation.y += (event.clientX - lastPointer.x) * 0.008; cubeRotation.x = Math.max(-0.52, Math.min(0.52, cubeRotation.x + (event.clientY - lastPointer.y) * 0.006)); lastPointer = {x: event.clientX, y: event.clientY}; });
-stage.addEventListener('pointerup', () => { dragging = false; });
-stage.addEventListener('pointercancel', () => { dragging = false; });
-stage.addEventListener('wheel', event => { event.preventDefault(); zoom = Math.max(0.72, Math.min(1.5, zoom - event.deltaY * 0.001)); }, {passive: false});
-document.querySelector('#reset-button').addEventListener('click', () => { cubeRotation = {x: 0.16, y: -0.42}; zoom = 1; });
+['dragenter', 'dragover'].forEach(type => document.addEventListener(type, event => {
+  event.preventDefault();
+  document.body.classList.add('dragover');
+}));
+['dragleave', 'drop'].forEach(type => document.addEventListener(type, event => {
+  event.preventDefault();
+  document.body.classList.remove('dragover');
+}));
+document.addEventListener('drop', event => loadVideo(event.dataTransfer.files[0]));
 
-const exportButton = document.querySelector('#export-button');
-const snapshotButton = document.querySelector('#snapshot-button');
-snapshotButton.addEventListener('click', () => renderer.domElement.toBlob(blob => { if (!blob) return; const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.download = 'frame-space.png'; link.href = url; link.click(); URL.revokeObjectURL(url); }));
-exportButton.addEventListener('click', async () => {
-  if (!video.duration || !canvas.captureStream || !window.MediaRecorder) { snapshotButton.click(); return; }
-  exportButton.disabled = true; exportButton.querySelector('span').textContent = 'RECORDING…'; state.textContent = 'RECORDING'; video.currentTime = 0; await video.play().catch(() => {});
-  const stream = canvas.captureStream(30); const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm'; const recorder = new MediaRecorder(stream, {mimeType: mime}); const chunks = [];
-  recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
-  recorder.onstop = () => { const url = URL.createObjectURL(new Blob(chunks, {type: mime})); const link = document.createElement('a'); link.download = 'frame-space.webm'; link.href = url; link.click(); URL.revokeObjectURL(url); exportButton.disabled = false; exportButton.querySelector('span').textContent = 'EXPORT CLIP'; state.textContent = video.paused ? 'PAUSED' : 'PLAYING'; };
-  const stopAt = () => { if (video.currentTime >= video.duration - 0.04) { video.removeEventListener('timeupdate', stopAt); recorder.stop(); } };
-  video.addEventListener('timeupdate', stopAt); recorder.start();
+video.addEventListener('loadedmetadata', buildVolume);
+video.addEventListener('error', () => {
+  buildToken += 1;
+  block.visible = false;
+  statusEl.textContent = 'CANNOT READ FILE';
+});
+if (video.readyState >= 1) buildVolume();
+
+// --- export ---------------------------------------------------------------
+
+function download(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.download = name;
+  link.href = url;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+document.querySelector('#snapshot').addEventListener('click', () => {
+  renderer.domElement.toBlob(blob => blob && download(blob, 'frame-space.png'));
 });
 
-if (video.readyState >= 1) { syncMetadata(); startExtraction(); }
+const exportButton = document.querySelector('#export');
+exportButton.addEventListener('click', () => {
+  if (!canvas.captureStream || !window.MediaRecorder) return;
+  const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+  const recorder = new MediaRecorder(canvas.captureStream(60), {mimeType: mime, videoBitsPerSecond: 12e6});
+  const chunks = [];
+  recorder.ondataavailable = event => event.data.size && chunks.push(event.data);
+  recorder.onstop = () => {
+    download(new Blob(chunks, {type: mime}), 'frame-space.webm');
+    exportButton.disabled = false;
+    exportButton.textContent = 'RECORD TURN';
+    statusEl.textContent = 'READY';
+  };
+  exportButton.disabled = true;
+  exportButton.textContent = 'RECORDING…';
+  statusEl.textContent = 'RECORDING';
+  // One full revolution at the current spin rate.
+  recorder.start();
+  setTimeout(() => recorder.stop(), Math.min(30000, 2 * Math.PI / spin * 1000));
+});
