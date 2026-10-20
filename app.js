@@ -24,7 +24,7 @@ const uniforms = {
   uScale: {value: new THREE.Vector3(1, 1, 1)},   // slab size: width, height, depth (time)
   uSize: {value: new THREE.Vector3(1, 1, 1)},    // proxy box size (bounds the bent shape)
   uCut: {value: 1},                              // cut-away position along time, 1 = no cut
-  uPlanes: {value: new THREE.Vector3(-1, -1, 0.45)}, // x / y / time planes drawn inside the volume, <0 = off
+  uPlane: {value: 0.45},                         // the active frame: position of the opaque time plane
   uOrtho: {value: 1},                            // 1 = isometric (parallel rays)
   uSolid: {value: 0},
   uShape: {value: 0},                            // 0 = box, 1 = lens, 2 = circle (cylinder along time)
@@ -74,7 +74,7 @@ const material = new THREE.ShaderMaterial({
     uniform vec3 uScale;
     uniform vec3 uSize;
     uniform float uCut;
-    uniform vec3 uPlanes;
+    uniform float uPlane;
     uniform float uSolid;
     uniform float uShape;
     uniform float uLayers;
@@ -159,19 +159,16 @@ const material = new THREE.ShaderMaterial({
             prevRemoved = true; // cut away
             havePrev = false;
           } else {
-            // Planes: when the ray crosses one between two samples, draw the video
-            // slice there. The time plane is the current frame; x / y planes show
-            // how things move through the clip.
+            // Active frame: when the ray crosses the time plane, draw that video frame
+            // as an opaque card inside the otherwise faint volume.
             if (havePrev) {
-              for (int a = 0; a < 3; a++) {
-                float pl = uPlanes[a];
-                float d0 = prevUvw[a] - pl;
-                float d1 = uvw[a] - pl;
-                if (pl >= 0.0 && d0 * d1 < 0.0) {
-                  vec3 hit = mix(prevUvw, uvw, d0 / (d0 - d1));
-                  acc.rgb += (1.0 - acc.a) * 0.9 * texture(uVolume, hit).rgb;
-                  acc.a += (1.0 - acc.a) * 0.9;
-                }
+              float d0 = prevUvw.z - uPlane;
+              float d1 = uvw.z - uPlane;
+              if (d0 * d1 < 0.0) {
+                vec3 hit = mix(prevUvw, uvw, d0 / (d0 - d1));
+                acc.rgb += (1.0 - acc.a) * texture(uVolume, hit).rgb;
+                acc.a = 1.0;
+                break;
               }
             }
             prevUvw = uvw;
@@ -382,7 +379,7 @@ function draw(now) {
   }
   if (playing && frameCount) {
     const next = playhead + dt / Math.max(video.duration || 6, 2);
-    setCut(next >= 1 ? 0.004 : next); // loop through the clip at its own speed
+    setCut(next >= 1 ? 0 : next); // loop through the clip at its own speed
   }
   renderViews();
   requestAnimationFrame(draw);
@@ -445,24 +442,16 @@ setTiltReadout();
 
 const cut = bindSlider('cut', value => setCut(value / 1000));
 function setCut(value) {
-  playhead = Math.min(Math.max(value, 0.002), 1);
+  playhead = Math.min(Math.max(value, 0), 1);
   cut.input.value = playhead * 1000;
   cut.paint();
-  uniforms.uPlanes.value.z = playhead;
-  uniforms.uCut.value = cutOn ? playhead : 1;
-  const frame = Math.max(1, Math.round(playhead * frameCount));
+  const plane = 0.004 + playhead * 0.992; // keep the card just inside the first and last frame
+  uniforms.uPlane.value = plane;
+  uniforms.uCut.value = cutOn ? plane : 1;
+  const frame = Math.round(playhead * Math.max(frameCount - 1, 0)) + 1;
   cut.output.textContent = frameCount ? `${String(frame).padStart(3, '0')} / ${frameCount}` : '…';
 }
 setCut(Number(cut.input.value) / 1000);
-
-function bindPlane(id, axis) {
-  bindSlider(id, (value, output) => {
-    uniforms.uPlanes.value[axis] = value < 1 ? -1 : value / 100;
-    output.textContent = value < 1 ? 'OFF' : `${Math.round(value)}%`;
-  });
-}
-bindPlane('planex', 'x');
-bindPlane('planey', 'y');
 
 const rollControl = bindSlider('roll', (value, output) => {
   roll = value / 100;
@@ -505,7 +494,7 @@ function setPlaying(on) {
   playing = on;
   playButton.classList.toggle('playing', on);
   playButton.setAttribute('aria-label', on ? 'Pause' : 'Play');
-  if (on && playhead >= 0.999) setCut(0.004); // restart from the first frame
+  if (on && playhead >= 0.999) setCut(0); // restart from the first frame
 }
 playButton.addEventListener('click', () => setPlaying(!playing));
 document.addEventListener('keydown', event => {
