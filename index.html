@@ -16,11 +16,19 @@
         <span id="frame-count">—</span>
       </header>
 
-      <h1>Time as shape.</h1>
-      <p class="caption">01 / <span id="source-name">sample.mp4</span></p>
+      <h1>Outside / inside.</h1>
+      <p class="caption">Source / <span id="source-name">sample.mp4</span></p>
 
-      <div class="stage" id="stage">
+      <div class="stage split" id="stage">
         <canvas id="canvas"></canvas>
+        <span class="tag tag-top">01 / The volume</span>
+        <span class="tag tag-bottom">02 / Through the volume</span>
+      </div>
+
+      <div class="player">
+        <button id="play" class="play" type="button" aria-label="Play"><span class="icon"></span></button>
+        <input id="cut" type="range" min="2" max="1000" step="1" value="1000" aria-label="Playback position" />
+        <output id="cut-value" for="cut">ALL</output>
       </div>
 
       <div class="controls">
@@ -37,18 +45,18 @@
           <input id="opacity" type="range" min="2" max="100" step="1" value="24" />
         </div>
         <div class="control">
-          <div class="control-head"><label for="cut">Cut through</label><output id="cut-value" for="cut">OFF</output></div>
-          <input id="cut" type="range" min="1" max="100" step="0.1" value="100" />
-        </div>
-        <div class="control">
           <div class="control-head"><label for="roll">Roll time</label><output id="roll-value" for="roll">FLAT</output></div>
           <input id="roll" type="range" min="0" max="100" step="0.5" value="0" />
+        </div>
+        <div class="control">
+          <div class="control-head"><label for="blur">Blur</label><output id="blur-value" for="blur">40%</output></div>
+          <input id="blur" type="range" min="0" max="100" step="1" value="40" />
         </div>
         <div class="control">
           <div class="control-head"><label for="layers">Layers</label><output id="layers-value" for="layers">OFF</output></div>
           <input id="layers" type="range" min="0" max="100" step="1" value="0" />
         </div>
-        <div class="control">
+        <div class="control control-wide">
           <div class="control-head"><span>View / shape / cut axis</span></div>
           <div class="segments">
             <span class="segment" id="mode"><button type="button" class="on" data-value="0">Volume</button><button type="button" data-value="1">Solid</button></span>
@@ -62,7 +70,7 @@
         <span>Code study / <span id="status">LOADING</span></span>
         <span class="actions">
           <label class="link" for="file-input">Open video<input id="file-input" type="file" accept="video/*" /></label>
-          <button class="link" id="play" type="button">Play cut</button>
+          <button class="link" id="split" type="button">Single view</button>
           <button class="link" id="snapshot" type="button">Still</button>
           <button class="link" id="export" type="button">Record turn</button>
         </span>

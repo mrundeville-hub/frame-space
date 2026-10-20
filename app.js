@@ -26,6 +26,7 @@ const uniforms = {
   uAxis: {value: 2},                             // 0 = x, 1 = y, 2 = time
   uSolid: {value: 0},
   uShape: {value: 0},                            // 0 = box, 1 = lens, 2 = circle (cylinder along time)
+  uBlur: {value: 0.4},                           // 0 = sharp, 1 = frames smear into each other
   uLayers: {value: 0},                           // 0 = continuous, 1 = thin separate frame plates                            // 1 = opaque surface instead of glass
   uPhi: {value: 0},                              // total angle the time axis is rolled through
   uRho: {value: 1},                              // bend radius = depth / phi
@@ -66,6 +67,7 @@ const material = new THREE.ShaderMaterial({
     uniform float uSolid;
     uniform float uShape;
     uniform float uLayers;
+    uniform float uBlur;
     uniform float uPhi;
     uniform float uRho;
     uniform vec2 uCenter;
@@ -98,6 +100,17 @@ const material = new THREE.ShaderMaterial({
       if (uShape > 0.5) l.xy /= 1.0 - 0.45 * pow(abs(l.z) / hs.z, 2.0);
       vec3 q = abs(l) - hs + uRadius;
       return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - uRadius;
+    }
+
+    // Soft look: average the centre with four diagonal taps spread across x, y and time.
+    vec3 sampleVolume(vec3 c) {
+      if (uBlur < 0.01) return texture(uVolume, c).rgb;
+      vec3 o = uBlur * vec3(0.016, 0.016, 0.05);
+      return 0.2 * (texture(uVolume, c).rgb
+        + texture(uVolume, c + vec3( o.x,  o.y,  o.z)).rgb
+        + texture(uVolume, c + vec3(-o.x, -o.y,  o.z)).rgb
+        + texture(uVolume, c + vec3( o.x, -o.y, -o.z)).rgb
+        + texture(uVolume, c + vec3(-o.x,  o.y, -o.z)).rgb);
     }
 
     // World point -> slab-local point. Rolled: the time axis is bent into an arc
@@ -133,7 +146,7 @@ const material = new THREE.ShaderMaterial({
           if (uCut < 0.999 && c > uCut) {
             prevRemoved = true; // sliced away
           } else {
-            vec3 color = texture(uVolume, uvw).rgb;
+            vec3 color = sampleVolume(uvw);
             // First kept sample after removed ones is the cut face: draw it solid.
             if (prevRemoved || (uSolid > 0.5 && mask > 0.5)) {
               acc.rgb += (1.0 - acc.a) * color;
@@ -259,17 +272,20 @@ async function buildVolume() {
 
   frameCount = d;
   frameCountEl.textContent = `${d} FRAMES`;
+  setCutValue(uniforms.uCut.value);
   setScale();
   updateSpacingReadout();
   block.visible = true;
   statusEl.textContent = 'READY';
 }
 
+let viewW = 1;
+let viewH = 1;
 function resize() {
   const rect = stage.getBoundingClientRect();
-  renderer.setSize(rect.width, rect.height, false);
-  camera.aspect = rect.width / Math.max(rect.height, 1);
-  camera.updateProjectionMatrix();
+  viewW = rect.width;
+  viewH = Math.max(rect.height, 1);
+  renderer.setSize(viewW, viewH, false);
 }
 new ResizeObserver(resize).observe(stage);
 resize();
@@ -281,6 +297,34 @@ function cameraDistance() {
   return Math.max(5.8, radius / Math.sin(camera.fov * Math.PI / 360) * 1.1);
 }
 
+let split = true;
+
+function renderView(x, y, w, h) {
+  renderer.setViewport(x, y, w, h);
+  renderer.setScissor(x, y, w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  camera.lookAt(0, 0, 0);
+  renderer.render(scene, camera);
+}
+
+// Split: the orbitable volume on top, the same volume seen straight down its time axis below.
+function renderViews() {
+  renderer.setScissorTest(true);
+  const distance = cameraDistance() / zoom;
+  block.rotation.set(angleX, angleY, 0);
+  camera.position.set(0, 0.35, distance);
+  if (!split) {
+    renderView(0, 0, viewW, viewH);
+    return;
+  }
+  const half = Math.floor(viewH / 2);
+  renderView(0, viewH - half, viewW, half);
+  block.rotation.set(0, 0, 0);
+  camera.position.set(0, 0, distance);
+  renderView(0, 0, viewW, half);
+}
+
 let lastTime = performance.now();
 function draw(now) {
   const dt = Math.min((now - lastTime) / 1000, 0.1);
@@ -289,11 +333,11 @@ function draw(now) {
     angleY += spin * dt;
     setRotationReadout();
   }
-  if (playing) setCut(uniforms.uCut.value >= 0.999 ? 0.02 : uniforms.uCut.value + 0.12 * dt);
-  block.rotation.set(angleX, angleY, 0);
-  camera.position.set(0, 0.35, cameraDistance() / zoom);
-  camera.lookAt(0, 0, 0);
-  renderer.render(scene, camera);
+  if (playing && frameCount) {
+    const next = uniforms.uCut.value + dt / Math.max(video.duration || 6, 2);
+    setCut(next >= 1 ? 0.004 : next); // loop through the clip at its own speed
+  }
+  renderViews();
   requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
@@ -340,19 +384,25 @@ uniforms.uDensity.value = Number(opacity.input.value) / 100;
 opacity.output.textContent = `${Math.round(opacity.input.value)}%`;
 depth = Number(spacing.input.value);
 
-const cut = bindSlider('cut', value => setCutValue(value / 100));
-const cutLabel = value => (value >= 0.999 ? 'OFF' : `${Math.round(value * 100)}%`);
+const cut = bindSlider('cut', value => setCutValue(value / 1000));
+function cutLabel(value) {
+  if (value >= 0.999) return 'ALL';
+  if (uniforms.uAxis.value === 2 && frameCount) {
+    return `${String(Math.max(1, Math.round(value * frameCount))).padStart(3, '0')} / ${frameCount}`;
+  }
+  return `${Math.round(value * 100)}%`;
+}
 function setCutValue(value) {
   uniforms.uCut.value = value;
   cut.output.textContent = cutLabel(value);
 }
 function setCut(value) {
-  if (value > 1) value = 1;
-  cut.input.value = value * 100;
+  value = Math.min(value, 1);
+  cut.input.value = value * 1000;
   cut.paint();
   setCutValue(value);
 }
-setCutValue(Number(cut.input.value) / 100);
+setCutValue(Number(cut.input.value) / 1000);
 
 const rollControl = bindSlider('roll', (value, output) => {
   roll = value / 100;
@@ -368,39 +418,41 @@ function bindSegment(id, onPick) {
   }));
 }
 bindSegment('mode', value => { uniforms.uSolid.value = value; });
-bindSegment('axis', value => { uniforms.uAxis.value = value; });
+bindSegment('axis', value => { uniforms.uAxis.value = value; setCutValue(uniforms.uCut.value); });
 bindSegment('shape', value => { uniforms.uShape.value = value; });
+
+bindSlider('blur', (value, output) => {
+  uniforms.uBlur.value = value / 100;
+  output.textContent = value < 1 ? 'OFF' : `${Math.round(value)}%`;
+});
 
 bindSlider('layers', (value, output) => {
   uniforms.uLayers.value = value / 100;
   output.textContent = value < 1 ? 'OFF' : `${Math.round(value)}%`;
 });
 
-const playButton = document.querySelector('#play');
-playButton.addEventListener('click', () => {
-  playing = !playing;
-  playButton.textContent = playing ? 'Pause' : 'Play cut';
+const splitButton = document.querySelector('#split');
+splitButton.addEventListener('click', () => {
+  split = !split;
+  stage.classList.toggle('split', split);
+  splitButton.textContent = split ? 'Single view' : 'Split view';
+  document.querySelector('h1').textContent = split ? 'Outside / inside.' : 'Time as shape.';
 });
 
-stage.addEventListener('pointerdown', event => {
-  dragging = true;
-  lastPointer = {x: event.clientX, y: event.clientY};
-  stage.setPointerCapture(event.pointerId);
+const playButton = document.querySelector('#play');
+function setPlaying(on) {
+  playing = on;
+  playButton.classList.toggle('playing', on);
+  playButton.setAttribute('aria-label', on ? 'Pause' : 'Play');
+  if (on && uniforms.uCut.value >= 0.999) setCut(0.004); // restart from the first frame
+}
+playButton.addEventListener('click', () => setPlaying(!playing));
+document.addEventListener('keydown', event => {
+  if (event.code === 'Space' && event.target === document.body) {
+    event.preventDefault();
+    setPlaying(!playing);
+  }
 });
-stage.addEventListener('pointermove', event => {
-  if (!dragging) return;
-  angleY += (event.clientX - lastPointer.x) * 0.008;
-  angleX = Math.max(-0.9, Math.min(0.9, angleX + (event.clientY - lastPointer.y) * 0.006));
-  lastPointer = {x: event.clientX, y: event.clientY};
-  setRotationReadout();
-});
-const stopDrag = () => { dragging = false; };
-stage.addEventListener('pointerup', stopDrag);
-stage.addEventListener('pointercancel', stopDrag);
-stage.addEventListener('wheel', event => {
-  event.preventDefault();
-  zoom = Math.max(0.6, Math.min(1.8, zoom - event.deltaY * 0.001));
-}, {passive: false});
 
 // --- source ---------------------------------------------------------------
 

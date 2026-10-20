@@ -21,13 +21,14 @@ happen in the browser.
 | Frame spacing | Depth of the block divided by the frame count |
 | Rotation | Y angle in degrees; tracks the slow auto-turn, drag it to take over |
 | Opacity | Extinction per unit depth — low reads as glass, high as a solid slab |
-| Cut through | Slices the volume away along the cut axis and draws the cut face solid — drag it to look inside, or scrub through time |
+| Player (▶ / scrubber / Space) | Plays the cut through the clip at its own speed and loops. Drag the scrubber to jump to any frame: the block grows frame by frame and the cut face is the picture at that moment. At the far right the cut is off and the whole volume shows |
 | Roll time | Bends the time axis into an arc, 0° flat to 360° a closed ring |
 | View | **Volume** is the glass block; **Solid** draws only the surface, so the side faces show the motion as streaks |
 | Layers | Keeps density only in thin plates, one per few frames, so the clip reads as separate stacked frames |
 | Shape | **Box**, **Lens** (the picture shrinks toward the first and last frame) or **Circle** (a cylinder along time) |
 | Cut axis | **X** / **Y** slice the picture plane, **T** slices through time (one frame at the cut) |
-| Play cut | Sweeps the cut through the clip on a loop |
+| Blur | Averages each sample with neighbours across the picture and time, so frames smear into one soft volume |
+| Split view | Top: the volume, orbit it. Bottom: the same volume seen straight down its time axis (the "through the volume" view). Single view gives one large stage |
 | Drag the stage | Orbit |
 | Scroll | Zoom |
 | Still / Record turn | PNG of the current view / WebM of one full revolution |
