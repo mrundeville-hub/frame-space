@@ -24,6 +24,7 @@ const uniforms = {
   uScale: {value: new THREE.Vector3(1, 1, 1)},   // slab size: width, height, depth (time)
   uSize: {value: new THREE.Vector3(1, 1, 1)},    // proxy box size (bounds the bent shape)
   uCut: {value: 1},                              // cut-away position along time, 1 = no cut
+  uFrameAlpha: {value: 1},                       // opacity of the active frame card
   uPlane: {value: 0.45},                         // the active frame: position of the opaque time plane
   uOrtho: {value: 1},                            // 1 = isometric (parallel rays)
   uSolid: {value: 0},
@@ -75,6 +76,7 @@ const material = new THREE.ShaderMaterial({
     uniform vec3 uSize;
     uniform float uCut;
     uniform float uPlane;
+    uniform float uFrameAlpha;
     uniform float uSolid;
     uniform float uShape;
     uniform float uLayers;
@@ -166,9 +168,9 @@ const material = new THREE.ShaderMaterial({
               float d1 = uvw.z - uPlane;
               if (d0 * d1 < 0.0) {
                 vec3 hit = mix(prevUvw, uvw, d0 / (d0 - d1));
-                acc.rgb += (1.0 - acc.a) * texture(uVolume, hit).rgb;
-                acc.a = 1.0;
-                break;
+                acc.rgb += (1.0 - acc.a) * uFrameAlpha * texture(uVolume, hit).rgb;
+                acc.a += (1.0 - acc.a) * uFrameAlpha;
+                if (acc.a > 0.995) break;
               }
             }
             prevUvw = uvw;
@@ -470,6 +472,11 @@ bindSegment('mode', value => { uniforms.uSolid.value = value; });
 bindSegment('cutmode', value => { cutOn = value === 1; setCut(playhead); });
 bindSegment('proj', value => { iso = value === 0; });
 bindSegment('shape', value => { uniforms.uShape.value = value; });
+
+bindSlider('framealpha', (value, output) => {
+  uniforms.uFrameAlpha.value = value / 100;
+  output.textContent = `${Math.round(value)}%`;
+});
 
 bindSlider('blur', (value, output) => {
   uniforms.uBlur.value = value / 100;

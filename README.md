@@ -20,7 +20,8 @@ happen in the browser.
 | --- | --- |
 | Frame spacing | Depth of the block divided by the frame count |
 | Rotation | Y angle in degrees; drag it to take over |
-| Opacity | Extinction per unit depth — low reads as glass, high as a solid slab |
+| Frame opacity | Opacity of the active frame card, 100% opaque down to 0% invisible |
+| Volume opacity | Extinction per unit depth — low reads as glass, high as a solid slab |
 | Player (▶ / scrubber / Space) | The active frame: an opaque card showing the video frame at the playhead, moving through the faint volume from the first frame to the last. ▶ plays it at the clip's own speed and loops; drag the scrubber to jump to any frame |
 | Tilt | Pitch of the cube; with Rotation and drag you can turn it any way. The default is a true isometric view |
 | Roll time | Bends the time axis into an arc, 0° flat to 360° a closed ring |
