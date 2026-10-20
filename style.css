@@ -73,7 +73,7 @@ h1 {
 .controls {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 26px;
+  gap: 20px 26px;
   padding: 16px 18px 18px;
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -146,6 +146,24 @@ input[type="range"]:focus-visible { outline: 1px solid #fff; outline-offset: 6px
 .link input { position: absolute; inset: 0; opacity: 0; width: 0; height: 0; }
 
 .link:disabled { opacity: 0.4; cursor: default; }
+
+.segments { display: flex; gap: 18px; align-items: center; }
+
+.segment { display: inline-flex; border: 1px solid var(--line); border-radius: 3px; }
+
+.segment button {
+  padding: 3px 9px;
+  border: 0;
+  background: none;
+  color: var(--dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.segment button + button { border-left: 1px solid var(--line); }
+.segment button:hover, .segment button:focus-visible { color: #fff; }
+.segment button.on { background: #fff; color: #000; }
 
 body.dragover .stage { outline: 1px solid var(--line); outline-offset: 12px; }
 

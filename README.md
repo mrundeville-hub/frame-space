@@ -21,7 +21,12 @@ happen in the browser.
 | Frame spacing | Depth of the block divided by the frame count |
 | Rotation | Y angle in degrees; tracks the slow auto-turn, drag it to take over |
 | Opacity | Extinction per unit depth — low reads as glass, high as a solid slab |
-| Drag the stage | Orbit | 
+| Cut through | Slices the volume away along the cut axis and draws the cut face solid — drag it to look inside, or scrub through time |
+| Roll time | Bends the time axis into an arc, 0° flat to 360° a closed ring |
+| View | **Volume** is the glass block; **Solid** draws only the surface, so the side faces show the motion as streaks |
+| Cut axis | **X** / **Y** slice the picture plane, **T** slices through time (one frame at the cut) |
+| Play cut | Sweeps the cut through the clip on a loop |
+| Drag the stage | Orbit |
 | Scroll | Zoom |
 | Still / Record turn | PNG of the current view / WebM of one full revolution |
 
@@ -35,6 +40,11 @@ box in object space and raymarches 160 steps front to back, compositing with
 rounding stays even on a non-cubic block, fades density near the shell — that's
 where the soft rounded silhouette comes from. The entry point is jittered per
 pixel so the fixed step count does not band.
+
+Rolling inverts a bend in the shader: each sample's world position is mapped back
+to slab coordinates (radius → x, arc length → time) before the volume is read, so
+the same raymarch draws a flat block, an arc or a ring. The cut works in volume
+coordinates, and the first kept sample after sliced-away ones is the cut face.
 
 Requires WebGL2 (`sampler3D`).
 

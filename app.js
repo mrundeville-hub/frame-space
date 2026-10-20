@@ -20,7 +20,14 @@ const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
 
 const uniforms = {
   uVolume: {value: null},
-  uScale: {value: new THREE.Vector3(1, 1, 1)},
+  uScale: {value: new THREE.Vector3(1, 1, 1)},   // slab size: width, height, depth (time)
+  uSize: {value: new THREE.Vector3(1, 1, 1)},    // proxy box size (bounds the bent shape)
+  uCut: {value: 1},                              // slice position along uAxis, 1 = no cut
+  uAxis: {value: 2},                             // 0 = x, 1 = y, 2 = time
+  uSolid: {value: 0},                            // 1 = opaque surface instead of glass
+  uPhi: {value: 0},                              // total angle the time axis is rolled through
+  uRho: {value: 1},                              // bend radius = depth / phi
+  uCenter: {value: new THREE.Vector2(0, 0)},     // bbox centre offset of the bent shape
   uDensity: {value: 0.24},
   uRadius: {value: 0.16},
   uSoft: {value: 0.05},
@@ -51,6 +58,13 @@ const material = new THREE.ShaderMaterial({
 
     uniform sampler3D uVolume;
     uniform vec3 uScale;
+    uniform vec3 uSize;
+    uniform float uCut;
+    uniform float uAxis;
+    uniform float uSolid;
+    uniform float uPhi;
+    uniform float uRho;
+    uniform vec2 uCenter;
     uniform float uDensity;
     uniform float uRadius;
     uniform float uSoft;
@@ -68,10 +82,18 @@ const material = new THREE.ShaderMaterial({
       return vec2(max(tmin.x, max(tmin.y, tmin.z)), min(tmax.x, min(tmax.y, tmax.z)));
     }
 
-    // Measured in world units so the rounding stays even on a non-cubic block.
-    float roundBox(vec3 p) {
-      vec3 q = abs(p * uScale) - uScale * 0.5 + uRadius;
+    // l is slab-local (world units), so the rounding stays even on a non-cubic block.
+    float roundBox(vec3 l) {
+      vec3 q = abs(l) - uScale * 0.5 + uRadius;
       return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - uRadius;
+    }
+
+    // World point -> slab-local point. Rolled: the time axis is bent into an arc
+    // of radius uRho around the y axis, so x becomes radius and z becomes arc length.
+    vec3 toLocal(vec3 w) {
+      if (uPhi < 0.02) return w;
+      vec2 d = vec2(w.x + uCenter.x, w.z + uCenter.y + uRho);
+      return vec3(length(d) - uRho, w.y, atan(d.x, d.y) * uRho);
     }
 
     float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -89,14 +111,30 @@ const material = new THREE.ShaderMaterial({
       float sigma = uDensity * 26.0;
 
       vec4 acc = vec4(0.0);
+      bool prevRemoved = false;
       for (float i = 0.0; i < uSteps; i += 1.0) {
-        float mask = 1.0 - smoothstep(-uSoft, 0.0, roundBox(p));
+        vec3 local = toLocal(p * uSize);
+        float mask = 1.0 - smoothstep(-uSoft, 0.0, roundBox(local));
         if (mask > 0.002) {
-          float alpha = 1.0 - exp(-sigma * mask * dt);
-          vec3 color = texture(uVolume, p + 0.5).rgb;
-          acc.rgb += (1.0 - acc.a) * alpha * color;
-          acc.a += (1.0 - acc.a) * alpha;
-          if (acc.a > 0.995) break;
+          vec3 uvw = local / uScale + 0.5;
+          float c = uAxis < 0.5 ? uvw.x : (uAxis < 1.5 ? uvw.y : uvw.z);
+          if (uCut < 0.999 && c > uCut) {
+            prevRemoved = true; // sliced away
+          } else {
+            vec3 color = texture(uVolume, uvw).rgb;
+            // First kept sample after removed ones is the cut face: draw it solid.
+            if (prevRemoved || (uSolid > 0.5 && mask > 0.5)) {
+              acc.rgb += (1.0 - acc.a) * color;
+              acc.a = 1.0;
+              break;
+            }
+            float alpha = 1.0 - exp(-sigma * mask * dt);
+            acc.rgb += (1.0 - acc.a) * alpha * color;
+            acc.a += (1.0 - acc.a) * alpha;
+            if (acc.a > 0.995) break;
+          }
+        } else {
+          prevRemoved = false;
         }
         p += stride;
       }
@@ -113,6 +151,8 @@ scene.add(block);
 let volumeTexture = null;
 let frameCount = 0;
 let depth = 1.05;
+let roll = 0;
+let playing = false;
 let angleY = -0.45;
 let angleX = 0.42;
 let spin = 0.09;
@@ -127,10 +167,32 @@ function setScale() {
   const ratio = (video.videoWidth || 16) / (video.videoHeight || 9);
   const w = ratio >= 1 ? 2.4 : 2.4 * ratio;
   const h = ratio >= 1 ? 2.4 / ratio : 2.4;
-  block.scale.set(w, h, depth);
+  const phi = roll * Math.PI * 2;
   uniforms.uScale.value.set(w, h, depth);
   uniforms.uRadius.value = Math.min(w, h, depth) * 0.22;
   uniforms.uSoft.value = Math.min(w, h, depth) * 0.07;
+  uniforms.uPhi.value = phi;
+
+  if (phi < 0.02) {
+    uniforms.uCenter.value.set(0, 0);
+    block.scale.set(w, h, depth);
+  } else {
+    // Bounding box of the rolled shape: sweep both radial edges through the arc.
+    const rho = depth / phi;
+    uniforms.uRho.value = rho;
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (let i = 0; i <= 128; i += 1) {
+      const a = (i / 128 - 0.5) * phi;
+      for (const r of [Math.max(rho - w / 2, 0), rho + w / 2]) {
+        const x = r * Math.sin(a), z = r * Math.cos(a) - rho;
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+      }
+    }
+    uniforms.uCenter.value.set((minX + maxX) / 2, (minZ + maxZ) / 2);
+    block.scale.set((maxX - minX) * 1.02 + 0.02, h, (maxZ - minZ) * 1.02 + 0.02);
+  }
+  uniforms.uSize.value.copy(block.scale);
 }
 
 function waitForSeek(time) {
@@ -209,6 +271,7 @@ function draw(now) {
     angleY += spin * dt;
     setRotationReadout();
   }
+  if (playing) setCut(uniforms.uCut.value >= 0.999 ? 0.02 : uniforms.uCut.value + 0.12 * dt);
   block.rotation.set(angleX, angleY, 0);
   camera.position.set(0, 0.35, cameraDistance() / zoom);
   camera.lookAt(0, 0, 0);
@@ -258,6 +321,42 @@ const opacity = bindSlider('opacity', (value, output) => {
 uniforms.uDensity.value = Number(opacity.input.value) / 100;
 opacity.output.textContent = `${Math.round(opacity.input.value)}%`;
 depth = Number(spacing.input.value);
+
+const cut = bindSlider('cut', value => setCutValue(value / 100));
+const cutLabel = value => (value >= 0.999 ? 'OFF' : `${Math.round(value * 100)}%`);
+function setCutValue(value) {
+  uniforms.uCut.value = value;
+  cut.output.textContent = cutLabel(value);
+}
+function setCut(value) {
+  if (value > 1) value = 1;
+  cut.input.value = value * 100;
+  cut.paint();
+  setCutValue(value);
+}
+setCutValue(Number(cut.input.value) / 100);
+
+const rollControl = bindSlider('roll', (value, output) => {
+  roll = value / 100;
+  output.textContent = roll < 0.01 ? 'FLAT' : `${Math.round(roll * 360)}°`;
+  setScale();
+});
+
+function bindSegment(id, onPick) {
+  const buttons = [...document.querySelectorAll(`#${id} button`)];
+  buttons.forEach(button => button.addEventListener('click', () => {
+    buttons.forEach(other => other.classList.toggle('on', other === button));
+    onPick(Number(button.dataset.value));
+  }));
+}
+bindSegment('mode', value => { uniforms.uSolid.value = value; });
+bindSegment('axis', value => { uniforms.uAxis.value = value; });
+
+const playButton = document.querySelector('#play');
+playButton.addEventListener('click', () => {
+  playing = !playing;
+  playButton.textContent = playing ? 'Pause' : 'Play cut';
+});
 
 stage.addEventListener('pointerdown', event => {
   dragging = true;
