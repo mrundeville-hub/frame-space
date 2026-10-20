@@ -17,13 +17,15 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 renderer.setClearColor(0x000000, 1);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
+const orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
 
 const uniforms = {
   uVolume: {value: null},
   uScale: {value: new THREE.Vector3(1, 1, 1)},   // slab size: width, height, depth (time)
   uSize: {value: new THREE.Vector3(1, 1, 1)},    // proxy box size (bounds the bent shape)
-  uCut: {value: 1},                              // slice position along uAxis, 1 = no cut
-  uAxis: {value: 2},                             // 0 = x, 1 = y, 2 = time
+  uCut: {value: 1},                              // cut-away position along time, 1 = no cut
+  uPlanes: {value: new THREE.Vector3(-1, -1, 0.45)}, // x / y / time planes drawn inside the volume, <0 = off
+  uOrtho: {value: 1},                            // 1 = isometric (parallel rays)
   uSolid: {value: 0},
   uShape: {value: 0},                            // 0 = box, 1 = lens, 2 = circle (cylinder along time)
   uBlur: {value: 0.4},                           // 0 = sharp, 1 = frames smear into each other
@@ -46,9 +48,18 @@ const material = new THREE.ShaderMaterial({
   vertexShader: `
     out vec3 vOrigin;
     out vec3 vDirection;
+    uniform float uOrtho;
     void main() {
-      vOrigin = (inverse(modelMatrix) * vec4(cameraPosition, 1.0)).xyz;
-      vDirection = position - vOrigin;
+      if (uOrtho > 0.5) {
+        // Parallel rays: every pixel looks along the camera's forward axis.
+        vec3 forward = -vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
+        vec3 d = normalize((inverse(modelMatrix) * vec4(forward, 0.0)).xyz);
+        vOrigin = position - d * 10.0;
+        vDirection = d;
+      } else {
+        vOrigin = (inverse(modelMatrix) * vec4(cameraPosition, 1.0)).xyz;
+        vDirection = position - vOrigin;
+      }
       gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
     }
   `,
@@ -63,7 +74,7 @@ const material = new THREE.ShaderMaterial({
     uniform vec3 uScale;
     uniform vec3 uSize;
     uniform float uCut;
-    uniform float uAxis;
+    uniform vec3 uPlanes;
     uniform float uSolid;
     uniform float uShape;
     uniform float uLayers;
@@ -137,17 +148,36 @@ const material = new THREE.ShaderMaterial({
 
       vec4 acc = vec4(0.0);
       bool prevRemoved = false;
+      vec3 prevUvw = vec3(0.0);
+      bool havePrev = false;
       for (float i = 0.0; i < uSteps; i += 1.0) {
         vec3 local = toLocal(p * uSize);
         float mask = 1.0 - smoothstep(-uSoft, 0.0, roundBox(local));
         if (mask > 0.002) {
           vec3 uvw = local / uScale + 0.5;
-          float c = uAxis < 0.5 ? uvw.x : (uAxis < 1.5 ? uvw.y : uvw.z);
-          if (uCut < 0.999 && c > uCut) {
-            prevRemoved = true; // sliced away
+          if (uCut < 0.999 && uvw.z > uCut) {
+            prevRemoved = true; // cut away
+            havePrev = false;
           } else {
+            // Planes: when the ray crosses one between two samples, draw the video
+            // slice there. The time plane is the current frame; x / y planes show
+            // how things move through the clip.
+            if (havePrev) {
+              for (int a = 0; a < 3; a++) {
+                float pl = uPlanes[a];
+                float d0 = prevUvw[a] - pl;
+                float d1 = uvw[a] - pl;
+                if (pl >= 0.0 && d0 * d1 < 0.0) {
+                  vec3 hit = mix(prevUvw, uvw, d0 / (d0 - d1));
+                  acc.rgb += (1.0 - acc.a) * 0.9 * texture(uVolume, hit).rgb;
+                  acc.a += (1.0 - acc.a) * 0.9;
+                }
+              }
+            }
+            prevUvw = uvw;
+            havePrev = true;
             vec3 color = sampleVolume(uvw);
-            // First kept sample after removed ones is the cut face: draw it solid.
+            // First kept sample after cut-away ones is the cut face: draw it solid.
             if (prevRemoved || (uSolid > 0.5 && mask > 0.5)) {
               acc.rgb += (1.0 - acc.a) * color;
               acc.a = 1.0;
@@ -166,6 +196,7 @@ const material = new THREE.ShaderMaterial({
           }
         } else {
           prevRemoved = false;
+          havePrev = false;
         }
         p += stride;
       }
@@ -184,9 +215,12 @@ let frameCount = 0;
 let depth = 1.05;
 let roll = 0;
 let playing = false;
-let angleY = -0.45;
-let angleX = 0.42;
-let spin = 0.09;
+let angleY = Math.PI / 4;      // isometric: 45° around, 35.264° down
+let angleX = 0.6155;
+let spin = 0;
+let iso = true;
+let playhead = 0.45;
+let cutOn = false;
 let zoom = 1;
 let dragging = false;
 let lastPointer = {x: 0, y: 0};
@@ -272,7 +306,7 @@ async function buildVolume() {
 
   frameCount = d;
   frameCountEl.textContent = `${d} FRAMES`;
-  setCutValue(uniforms.uCut.value);
+  setCut(playhead);
   setScale();
   updateSpacingReadout();
   block.visible = true;
@@ -297,32 +331,45 @@ function cameraDistance() {
   return Math.max(5.8, radius / Math.sin(camera.fov * Math.PI / 360) * 1.1);
 }
 
-let split = true;
+let split = false;
 
-function renderView(x, y, w, h) {
+function renderView(x, y, w, h, cam) {
   renderer.setViewport(x, y, w, h);
   renderer.setScissor(x, y, w, h);
-  camera.aspect = w / h;
-  camera.updateProjectionMatrix();
-  camera.lookAt(0, 0, 0);
-  renderer.render(scene, camera);
+  const aspect = w / h;
+  if (cam === orthoCamera) {
+    const radius = 0.5 * Math.hypot(block.scale.x, block.scale.y, block.scale.z) * 1.08 / zoom;
+    const halfH = aspect >= 1 ? radius : radius / aspect;
+    orthoCamera.left = -halfH * aspect;
+    orthoCamera.right = halfH * aspect;
+    orthoCamera.top = halfH;
+    orthoCamera.bottom = -halfH;
+  } else {
+    camera.aspect = aspect;
+  }
+  cam.updateProjectionMatrix();
+  cam.lookAt(0, 0, 0);
+  renderer.render(scene, cam);
 }
 
 // Split: the orbitable volume on top, the same volume seen straight down its time axis below.
 function renderViews() {
   renderer.setScissorTest(true);
+  const cam = iso ? orthoCamera : camera;
+  uniforms.uOrtho.value = iso ? 1 : 0;
   const distance = cameraDistance() / zoom;
+  const place = height => cam.position.set(0, iso ? 0 : height, iso ? 20 : distance);
   block.rotation.set(angleX, angleY, 0);
-  camera.position.set(0, 0.35, distance);
+  place(0.35);
   if (!split) {
-    renderView(0, 0, viewW, viewH);
+    renderView(0, 0, viewW, viewH, cam);
     return;
   }
   const half = Math.floor(viewH / 2);
-  renderView(0, viewH - half, viewW, half);
+  renderView(0, viewH - half, viewW, half, cam);
   block.rotation.set(0, 0, 0);
-  camera.position.set(0, 0, distance);
-  renderView(0, 0, viewW, half);
+  place(0);
+  renderView(0, 0, viewW, half, cam);
 }
 
 let lastTime = performance.now();
@@ -334,7 +381,7 @@ function draw(now) {
     setRotationReadout();
   }
   if (playing && frameCount) {
-    const next = uniforms.uCut.value + dt / Math.max(video.duration || 6, 2);
+    const next = playhead + dt / Math.max(video.duration || 6, 2);
     setCut(next >= 1 ? 0.004 : next); // loop through the clip at its own speed
   }
   renderViews();
@@ -376,6 +423,17 @@ function setRotationReadout() {
   rotation.paint();
 }
 
+const tilt = bindSlider('tilt', value => {
+  angleX = value * Math.PI / 180;
+  spinHeldUntil = performance.now() + 900;
+});
+function setTiltReadout() {
+  const deg = angleX * 180 / Math.PI;
+  tilt.input.value = deg;
+  tilt.output.textContent = `${deg.toFixed(1)}°`;
+  tilt.paint();
+}
+
 const opacity = bindSlider('opacity', (value, output) => {
   uniforms.uDensity.value = value / 100;
   output.textContent = `${Math.round(value)}%`;
@@ -383,26 +441,28 @@ const opacity = bindSlider('opacity', (value, output) => {
 uniforms.uDensity.value = Number(opacity.input.value) / 100;
 opacity.output.textContent = `${Math.round(opacity.input.value)}%`;
 depth = Number(spacing.input.value);
+setTiltReadout();
 
-const cut = bindSlider('cut', value => setCutValue(value / 1000));
-function cutLabel(value) {
-  if (value >= 0.999) return 'ALL';
-  if (uniforms.uAxis.value === 2 && frameCount) {
-    return `${String(Math.max(1, Math.round(value * frameCount))).padStart(3, '0')} / ${frameCount}`;
-  }
-  return `${Math.round(value * 100)}%`;
-}
-function setCutValue(value) {
-  uniforms.uCut.value = value;
-  cut.output.textContent = cutLabel(value);
-}
+const cut = bindSlider('cut', value => setCut(value / 1000));
 function setCut(value) {
-  value = Math.min(value, 1);
-  cut.input.value = value * 1000;
+  playhead = Math.min(Math.max(value, 0.002), 1);
+  cut.input.value = playhead * 1000;
   cut.paint();
-  setCutValue(value);
+  uniforms.uPlanes.value.z = playhead;
+  uniforms.uCut.value = cutOn ? playhead : 1;
+  const frame = Math.max(1, Math.round(playhead * frameCount));
+  cut.output.textContent = frameCount ? `${String(frame).padStart(3, '0')} / ${frameCount}` : '…';
 }
-setCutValue(Number(cut.input.value) / 1000);
+setCut(Number(cut.input.value) / 1000);
+
+function bindPlane(id, axis) {
+  bindSlider(id, (value, output) => {
+    uniforms.uPlanes.value[axis] = value < 1 ? -1 : value / 100;
+    output.textContent = value < 1 ? 'OFF' : `${Math.round(value)}%`;
+  });
+}
+bindPlane('planex', 'x');
+bindPlane('planey', 'y');
 
 const rollControl = bindSlider('roll', (value, output) => {
   roll = value / 100;
@@ -418,7 +478,8 @@ function bindSegment(id, onPick) {
   }));
 }
 bindSegment('mode', value => { uniforms.uSolid.value = value; });
-bindSegment('axis', value => { uniforms.uAxis.value = value; setCutValue(uniforms.uCut.value); });
+bindSegment('cutmode', value => { cutOn = value === 1; setCut(playhead); });
+bindSegment('proj', value => { iso = value === 0; });
 bindSegment('shape', value => { uniforms.uShape.value = value; });
 
 bindSlider('blur', (value, output) => {
@@ -444,7 +505,7 @@ function setPlaying(on) {
   playing = on;
   playButton.classList.toggle('playing', on);
   playButton.setAttribute('aria-label', on ? 'Pause' : 'Play');
-  if (on && uniforms.uCut.value >= 0.999) setCut(0.004); // restart from the first frame
+  if (on && playhead >= 0.999) setCut(0.004); // restart from the first frame
 }
 playButton.addEventListener('click', () => setPlaying(!playing));
 document.addEventListener('keydown', event => {
@@ -453,6 +514,27 @@ document.addEventListener('keydown', event => {
     setPlaying(!playing);
   }
 });
+
+stage.addEventListener('pointerdown', event => {
+  dragging = true;
+  lastPointer = {x: event.clientX, y: event.clientY};
+  stage.setPointerCapture(event.pointerId);
+});
+stage.addEventListener('pointermove', event => {
+  if (!dragging) return;
+  angleY += (event.clientX - lastPointer.x) * 0.008;
+  angleX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, angleX + (event.clientY - lastPointer.y) * 0.006));
+  lastPointer = {x: event.clientX, y: event.clientY};
+  setRotationReadout();
+  setTiltReadout();
+});
+const stopDrag = () => { dragging = false; };
+stage.addEventListener('pointerup', stopDrag);
+stage.addEventListener('pointercancel', stopDrag);
+stage.addEventListener('wheel', event => {
+  event.preventDefault();
+  zoom = Math.max(0.6, Math.min(1.8, zoom - event.deltaY * 0.001));
+}, {passive: false});
 
 // --- source ---------------------------------------------------------------
 
@@ -520,7 +602,9 @@ exportButton.addEventListener('click', () => {
   exportButton.disabled = true;
   exportButton.textContent = 'RECORDING…';
   statusEl.textContent = 'RECORDING';
-  // One full revolution at the current spin rate.
+  // One full revolution in 8 seconds, then back to a still cube.
+  const previousSpin = spin;
+  spin = 2 * Math.PI / 8;
   recorder.start();
-  setTimeout(() => recorder.stop(), Math.min(30000, 2 * Math.PI / spin * 1000));
+  setTimeout(() => { recorder.stop(); spin = previousSpin; }, 8000);
 });

@@ -16,10 +16,10 @@
         <span id="frame-count">—</span>
       </header>
 
-      <h1>Outside / inside.</h1>
+      <h1>Time as shape.</h1>
       <p class="caption">Source / <span id="source-name">sample.mp4</span></p>
 
-      <div class="stage split" id="stage">
+      <div class="stage" id="stage">
         <canvas id="canvas"></canvas>
         <span class="tag tag-top">01 / The volume</span>
         <span class="tag tag-bottom">02 / Through the volume</span>
@@ -27,8 +27,8 @@
 
       <div class="player">
         <button id="play" class="play" type="button" aria-label="Play"><span class="icon"></span></button>
-        <input id="cut" type="range" min="2" max="1000" step="1" value="1000" aria-label="Playback position" />
-        <output id="cut-value" for="cut">ALL</output>
+        <input id="cut" type="range" min="2" max="1000" step="1" value="450" aria-label="Playhead" />
+        <output id="cut-value" for="cut">…</output>
       </div>
 
       <div class="controls">
@@ -39,6 +39,10 @@
         <div class="control">
           <div class="control-head"><label for="rotation">Rotation</label><output id="rotation-value" for="rotation">0.0°</output></div>
           <input id="rotation" type="range" min="-180" max="180" step="0.1" value="-26" />
+        </div>
+        <div class="control">
+          <div class="control-head"><label for="tilt">Tilt</label><output id="tilt-value" for="tilt">0.0°</output></div>
+          <input id="tilt" type="range" min="-90" max="90" step="0.1" value="35" />
         </div>
         <div class="control">
           <div class="control-head"><label for="opacity">Opacity</label><output id="opacity-value" for="opacity">24%</output></div>
@@ -53,15 +57,24 @@
           <input id="blur" type="range" min="0" max="100" step="1" value="40" />
         </div>
         <div class="control">
+          <div class="control-head"><label for="planex">Plane X</label><output id="planex-value" for="planex">OFF</output></div>
+          <input id="planex" type="range" min="0" max="100" step="1" value="0" />
+        </div>
+        <div class="control">
+          <div class="control-head"><label for="planey">Plane Y</label><output id="planey-value" for="planey">OFF</output></div>
+          <input id="planey" type="range" min="0" max="100" step="1" value="0" />
+        </div>
+        <div class="control">
           <div class="control-head"><label for="layers">Layers</label><output id="layers-value" for="layers">OFF</output></div>
           <input id="layers" type="range" min="0" max="100" step="1" value="0" />
         </div>
         <div class="control control-wide">
-          <div class="control-head"><span>View / shape / cut axis</span></div>
+          <div class="control-head"><span>View / shape / playhead / camera</span></div>
           <div class="segments">
             <span class="segment" id="mode"><button type="button" class="on" data-value="0">Volume</button><button type="button" data-value="1">Solid</button></span>
             <span class="segment" id="shape"><button type="button" class="on" data-value="0">Box</button><button type="button" data-value="1">Lens</button><button type="button" data-value="2">Circle</button></span>
-            <span class="segment" id="axis"><button type="button" data-value="0">X</button><button type="button" data-value="1">Y</button><button type="button" class="on" data-value="2">T</button></span>
+            <span class="segment" id="cutmode"><button type="button" class="on" data-value="0">Plane</button><button type="button" data-value="1">Cut</button></span>
+            <span class="segment" id="proj"><button type="button" class="on" data-value="0">Iso</button><button type="button" data-value="1">Persp</button></span>
           </div>
         </div>
       </div>
@@ -70,7 +83,7 @@
         <span>Code study / <span id="status">LOADING</span></span>
         <span class="actions">
           <label class="link" for="file-input">Open video<input id="file-input" type="file" accept="video/*" /></label>
-          <button class="link" id="split" type="button">Single view</button>
+          <button class="link" id="split" type="button">Split view</button>
           <button class="link" id="snapshot" type="button">Still</button>
           <button class="link" id="export" type="button">Record turn</button>
         </span>

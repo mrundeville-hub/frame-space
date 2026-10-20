@@ -19,14 +19,17 @@ happen in the browser.
 | Control | What it does |
 | --- | --- |
 | Frame spacing | Depth of the block divided by the frame count |
-| Rotation | Y angle in degrees; tracks the slow auto-turn, drag it to take over |
+| Rotation | Y angle in degrees; drag it to take over |
 | Opacity | Extinction per unit depth — low reads as glass, high as a solid slab |
-| Player (▶ / scrubber / Space) | Plays the cut through the clip at its own speed and loops. Drag the scrubber to jump to any frame: the block grows frame by frame and the cut face is the picture at that moment. At the far right the cut is off and the whole volume shows |
+| Player (▶ / scrubber / Space) | The time plane: draws the video frame at the playhead inside the volume. ▶ plays it through the clip at its own speed and loops; drag the scrubber to jump to any frame |
+| Plane X / Plane Y | Vertical and horizontal planes inside the volume. They show the clip sliced across time, so you see how objects move through it as streaks |
+| Tilt | Pitch of the cube; with Rotation and drag you can turn it any way. The default is a true isometric view |
 | Roll time | Bends the time axis into an arc, 0° flat to 360° a closed ring |
 | View | **Volume** is the glass block; **Solid** draws only the surface, so the side faces show the motion as streaks |
 | Layers | Keeps density only in thin plates, one per few frames, so the clip reads as separate stacked frames |
 | Shape | **Box**, **Lens** (the picture shrinks toward the first and last frame) or **Circle** (a cylinder along time) |
-| Cut axis | **X** / **Y** slice the picture plane, **T** slices through time (one frame at the cut) |
+| Plane / Cut | **Plane** keeps the whole volume and draws the playhead inside it; **Cut** also removes everything after the playhead so the block grows as the clip plays |
+| Iso / Persp | Parallel (isometric) or perspective camera |
 | Blur | Averages each sample with neighbours across the picture and time, so frames smear into one soft volume |
 | Split view | Top: the volume, orbit it. Bottom: the same volume seen straight down its time axis (the "through the volume" view). Single view gives one large stage |
 | Drag the stage | Orbit |
