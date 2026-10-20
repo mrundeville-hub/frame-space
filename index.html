@@ -45,9 +45,14 @@
           <input id="roll" type="range" min="0" max="100" step="0.5" value="0" />
         </div>
         <div class="control">
-          <div class="control-head"><span>View / cut axis</span></div>
+          <div class="control-head"><label for="layers">Layers</label><output id="layers-value" for="layers">OFF</output></div>
+          <input id="layers" type="range" min="0" max="100" step="1" value="0" />
+        </div>
+        <div class="control">
+          <div class="control-head"><span>View / shape / cut axis</span></div>
           <div class="segments">
             <span class="segment" id="mode"><button type="button" class="on" data-value="0">Volume</button><button type="button" data-value="1">Solid</button></span>
+            <span class="segment" id="shape"><button type="button" class="on" data-value="0">Box</button><button type="button" data-value="1">Lens</button><button type="button" data-value="2">Circle</button></span>
             <span class="segment" id="axis"><button type="button" data-value="0">X</button><button type="button" data-value="1">Y</button><button type="button" class="on" data-value="2">T</button></span>
           </div>
         </div>

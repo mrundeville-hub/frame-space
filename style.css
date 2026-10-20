@@ -147,7 +147,7 @@ input[type="range"]:focus-visible { outline: 1px solid #fff; outline-offset: 6px
 
 .link:disabled { opacity: 0.4; cursor: default; }
 
-.segments { display: flex; gap: 18px; align-items: center; }
+.segments { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; }
 
 .segment { display: inline-flex; border: 1px solid var(--line); border-radius: 3px; }
 

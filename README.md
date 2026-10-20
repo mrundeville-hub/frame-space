@@ -24,6 +24,8 @@ happen in the browser.
 | Cut through | Slices the volume away along the cut axis and draws the cut face solid — drag it to look inside, or scrub through time |
 | Roll time | Bends the time axis into an arc, 0° flat to 360° a closed ring |
 | View | **Volume** is the glass block; **Solid** draws only the surface, so the side faces show the motion as streaks |
+| Layers | Keeps density only in thin plates, one per few frames, so the clip reads as separate stacked frames |
+| Shape | **Box**, **Lens** (the picture shrinks toward the first and last frame) or **Circle** (a cylinder along time) |
 | Cut axis | **X** / **Y** slice the picture plane, **T** slices through time (one frame at the cut) |
 | Play cut | Sweeps the cut through the clip on a loop |
 | Drag the stage | Orbit |

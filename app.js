@@ -24,7 +24,9 @@ const uniforms = {
   uSize: {value: new THREE.Vector3(1, 1, 1)},    // proxy box size (bounds the bent shape)
   uCut: {value: 1},                              // slice position along uAxis, 1 = no cut
   uAxis: {value: 2},                             // 0 = x, 1 = y, 2 = time
-  uSolid: {value: 0},                            // 1 = opaque surface instead of glass
+  uSolid: {value: 0},
+  uShape: {value: 0},                            // 0 = box, 1 = lens, 2 = circle (cylinder along time)
+  uLayers: {value: 0},                           // 0 = continuous, 1 = thin separate frame plates                            // 1 = opaque surface instead of glass
   uPhi: {value: 0},                              // total angle the time axis is rolled through
   uRho: {value: 1},                              // bend radius = depth / phi
   uCenter: {value: new THREE.Vector2(0, 0)},     // bbox centre offset of the bent shape
@@ -62,6 +64,8 @@ const material = new THREE.ShaderMaterial({
     uniform float uCut;
     uniform float uAxis;
     uniform float uSolid;
+    uniform float uShape;
+    uniform float uLayers;
     uniform float uPhi;
     uniform float uRho;
     uniform vec2 uCenter;
@@ -84,7 +88,15 @@ const material = new THREE.ShaderMaterial({
 
     // l is slab-local (world units), so the rounding stays even on a non-cubic block.
     float roundBox(vec3 l) {
-      vec3 q = abs(l) - uScale * 0.5 + uRadius;
+      vec3 hs = uScale * 0.5;
+      if (uShape > 1.5) {
+        // Circle: a cylinder along the time axis.
+        vec2 d = vec2(length(l.xy) - min(hs.x, hs.y) + uRadius, abs(l.z) - hs.z + uRadius);
+        return min(max(d.x, d.y), 0.0) + length(max(d, 0.0)) - uRadius;
+      }
+      // Lens: the picture shrinks toward the first and last frame.
+      if (uShape > 0.5) l.xy /= 1.0 - 0.45 * pow(abs(l.z) / hs.z, 2.0);
+      vec3 q = abs(l) - hs + uRadius;
       return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - uRadius;
     }
 
@@ -128,7 +140,13 @@ const material = new THREE.ShaderMaterial({
               acc.a = 1.0;
               break;
             }
-            float alpha = 1.0 - exp(-sigma * mask * dt);
+            // Layers: keep density only in thin plates, one per few frames.
+            float plate = 1.0;
+            if (uLayers > 0.01) {
+              float thick = mix(1.0, 0.1, uLayers);
+              plate = (1.0 - smoothstep(thick * 0.4, thick * 0.5, abs(fract(uvw.z * 28.0) - 0.5))) / thick;
+            }
+            float alpha = 1.0 - exp(-sigma * mask * plate * dt);
             acc.rgb += (1.0 - acc.a) * alpha * color;
             acc.a += (1.0 - acc.a) * alpha;
             if (acc.a > 0.995) break;
@@ -351,6 +369,12 @@ function bindSegment(id, onPick) {
 }
 bindSegment('mode', value => { uniforms.uSolid.value = value; });
 bindSegment('axis', value => { uniforms.uAxis.value = value; });
+bindSegment('shape', value => { uniforms.uShape.value = value; });
+
+bindSlider('layers', (value, output) => {
+  uniforms.uLayers.value = value / 100;
+  output.textContent = value < 1 ? 'OFF' : `${Math.round(value)}%`;
+});
 
 const playButton = document.querySelector('#play');
 playButton.addEventListener('click', () => {
